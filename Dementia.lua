@@ -21,14 +21,19 @@ local STOMACH_SOUND = 539135 -- C'Thun's stomach (AQ40)
 local SOUND_DURATION = 3
 local FADE_MS = 500
 
+local DEFAULT_REMINDER_INTERVAL = 60
+
 local WELL_RESTED_MAX_STACKS = 3
 
 local sleepingBagTimer
 local buffFoodTimer
 local busyUntil = 0
+local quietUntil = GetTime() + 10
 
 local function PlayCue(sound, msg, length, cut, isKit)
-    if InCombatLockdown() or UnitOnTaxi("player") or UnitIsAFK("player") then return end
+    if InCombatLockdown() or UnitOnTaxi("player") or UnitIsAFK("player") or GetTime() < quietUntil then
+        return
+    end
 
     local now = GetTime()
     if now < busyUntil then
@@ -39,7 +44,7 @@ local function PlayCue(sound, msg, length, cut, isKit)
     end
     busyUntil = now + (cut or length) + 1
 
-    RaidNotice_AddMessage(RaidWarningFrame, msg, ChatTypeInfo.RAID_WARNING)
+    RaidNotice_AddMessage(RaidWarningFrame, msg, ChatTypeInfo.RAID_WARNING, 5)
 
     local ok, handle
     if isKit then
@@ -72,6 +77,11 @@ local function wellRestedCallback()
     PlayCue(randomYawnID, "you're tired...", 2, nil, true)
 end
 
+local function scheduleWellRested()
+    wellRestedCallback()
+    sleepingBagTimer = C_Timer.NewTimer(DementiaDB.reminderInterval, scheduleWellRested)
+end
+
 local function updateWellRested()
     local wellRestedAura = C_UnitAuras.GetPlayerAuraBySpellID(WELL_RESTED_SPELL_ID)
     local hasMaxStacks = wellRestedAura and wellRestedAura.applications >= WELL_RESTED_MAX_STACKS
@@ -84,8 +94,7 @@ local function updateWellRested()
             and not UnitIsDeadOrGhost("player")     -- alive
 
     if shouldAlert and not sleepingBagTimer then
-        sleepingBagTimer = C_Timer.NewTicker(30, wellRestedCallback)
-        wellRestedCallback()
+        scheduleWellRested()
     elseif not shouldAlert and sleepingBagTimer then
         sleepingBagTimer:Cancel()
         sleepingBagTimer = nil
@@ -94,6 +103,11 @@ end
 
 local function fedCallback()
     PlayCue(STOMACH_SOUND, "you're hungry...", nil, SOUND_DURATION)
+end
+
+local function scheduleFed()
+    fedCallback()
+    buffFoodTimer = C_Timer.NewTimer(DementiaDB.reminderInterval, scheduleFed)
 end
 
 local function updateFed()
@@ -107,8 +121,7 @@ local function updateFed()
             and not UnitIsDeadOrGhost("player")                 -- alive
 
     if shouldAlert and not buffFoodTimer then
-        buffFoodTimer = C_Timer.NewTicker(30, fedCallback)
-        fedCallback()
+        scheduleFed()
     elseif not shouldAlert and buffFoodTimer then
         buffFoodTimer:Cancel()
         buffFoodTimer = nil
@@ -129,6 +142,10 @@ settings:SetScript("OnEvent", function(_, _, addonName)
     DementiaDB = DementiaDB or {}
     if DementiaDB.enableMiningTracking == nil then
         DementiaDB.enableMiningTracking = false
+    end
+
+    if DementiaDB.reminderInterval == nil then
+        DementiaDB.reminderInterval = DEFAULT_REMINDER_INTERVAL
     end
 
     local category = Settings.RegisterVerticalLayoutCategory(ADDON_NAME)
@@ -183,6 +200,24 @@ settings:SetScript("OnEvent", function(_, _, addonName)
 
         local tooltip = "Plays a reminding sound when the character is missing the buff"
         Settings.CreateCheckbox(category, setting, tooltip)
+    end
+
+    do
+        local name = "Reminder Interval"
+        local variable = "DementiaReminderInterval"
+        local variableKey = "reminderInterval"
+        local variableTbl = DementiaDB
+        local defaultValue = DEFAULT_REMINDER_INTERVAL
+        local minValue = 10
+        local maxValue = 600
+        local step = 10
+
+        local setting = Settings.RegisterAddOnSetting(category, variable, variableKey, variableTbl, type(defaultValue), name, defaultValue)
+
+        local tooltip = "The duration in seconds between the reminders"
+        local options = Settings.CreateSliderOptions(minValue, maxValue, step)
+        options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right);
+        Settings.CreateSlider(category, setting, options, tooltip)
     end
 
     Settings.RegisterAddOnCategory(category)
