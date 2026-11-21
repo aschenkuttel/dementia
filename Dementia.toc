@@ -1,0 +1,7 @@
+## Interface: 16001
+## Title: Dementia
+## SavedVariablesPerCharacter: DementiaDB
+## Author: Aschenkuttel
+## Version: 0.1
+
+Dementia.lua
