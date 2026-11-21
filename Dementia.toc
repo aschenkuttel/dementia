@@ -3,6 +3,6 @@
 ## Title: Dementia
 ## IconTexture: Interface\AddOns\Dementia\icon.tga
 ## Author: Aschenkuttel
-## Version: 0.1
+## Version: 0.11
 
 Dementia.lua
