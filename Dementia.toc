@@ -1,6 +1,7 @@
 ## Interface: 16001
-## Title: Dementia
 ## SavedVariablesPerCharacter: DementiaDB
+## Title: Dementia
+## IconTexture: Interface\AddOns\Dementia\icon.tga
 ## Author: Aschenkuttel
 ## Version: 0.1
 
