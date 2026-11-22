@@ -17,8 +17,15 @@ local YAWNS = {
     7934,
 }
 
-local STOMACH_SOUND = 539135 -- C'Thun's stomach (AQ40)
-local SOUND_DURATION = 3
+local SIGHS = {
+    540729,
+    540524,
+    540952,
+    540865,
+    1304917,
+    1316213
+}
+
 local FADE_MS = 500
 
 local DEFAULT_REMINDER_INTERVAL = 60
@@ -102,7 +109,9 @@ local function updateWellRested()
 end
 
 local function fedCallback()
-    PlayCue(STOMACH_SOUND, "you're hungry...", nil, SOUND_DURATION)
+    local randomIndex = math.random(1, #SIGHS)
+    local randomSighID = SIGHS[randomIndex]
+    PlayCue(randomSighID, "you're hungry...", 3)
 end
 
 local function scheduleFed()
