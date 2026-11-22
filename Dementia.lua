@@ -1,6 +1,7 @@
 local ADDON_NAME = "Dementia"
 
 local FIND_MINING_SPELL_ID = 2580
+local FIND_HERBS_SPELL_ID = 2383
 local RESTING_SPELL_ID = 1331671
 local WELL_RESTED_SPELL_ID = 429959
 local FED_SPELL_ID = 1249519
@@ -35,6 +36,15 @@ local WELL_RESTED_EXPIRY_WARNING_SECONDS = 600
 
 local busyUntil = 0
 local lastBlockedAt = 0
+
+local function isRestricted()
+    for _, restrictionType in pairs(Enum.AddOnRestrictionType) do
+        if C_RestrictedActions.IsAddOnRestrictionActive(restrictionType) then
+            return true
+        end
+    end
+    return false
+end
 
 local function PlayCue(sound, msg, length)
     local now = GetTime()
@@ -98,14 +108,14 @@ local buffFoodReminder = {
 
 local REMINDERS = { sleepingBagReminder, buffFoodReminder }
 
-local function findMiningTracking()
+local function restoreGatheringTracking()
     local numTrackingTypes = C_Minimap.GetNumTrackingTypes()
 
     for i = 1, numTrackingTypes do
         local info = C_Minimap.GetTrackingInfo(i)
 
-        if info.spellID == FIND_MINING_SPELL_ID then
-            return i, info
+        if (info.spellID == FIND_MINING_SPELL_ID or info.spellID == FIND_HERBS_SPELL_ID) and not info.active then
+            C_Minimap.SetTracking(i, true)
         end
     end
 end
@@ -122,8 +132,8 @@ settings:SetScript("OnEvent", function(_, _, addonName)
     end
 
     DementiaDB = DementiaDB or {}
-    if DementiaDB.enableMiningTracking == nil then
-        DementiaDB.enableMiningTracking = false
+    if DementiaDB.enableGatheringTracking == nil then
+        DementiaDB.enableGatheringTracking = false
     end
 
     if DementiaDB.reminderInterval == nil then
@@ -133,24 +143,19 @@ settings:SetScript("OnEvent", function(_, _, addonName)
     local category = Settings.RegisterVerticalLayoutCategory(ADDON_NAME)
 
     do
-        local name = "Tracking Minerals"
-        local variable = "DementiaEnableMiningTracking"
-        local variableKey = "enableMiningTracking"
+        local name = "Restore Gathering Tracking"
+        local variable = "DementiaEnableGatheringTracking"
+        local variableKey = "enableGatheringTracking"
         local variableTbl = DementiaDB
         local defaultValue = false
 
         local setting = Settings.RegisterAddOnSetting(category, variable, variableKey, variableTbl, type(defaultValue), name, defaultValue)
 
         setting:SetValueChangedCallback(function(_, value)
-            local index, info = findMiningTracking()
-            if not info or not value then
-                return
-            end
-
-            C_Minimap.SetTracking(index, value)
+            if value then restoreGatheringTracking() end
         end)
 
-        local tooltip = "Enables Tracking Minerals after the Character is revived"
+        local tooltip = "Enables Tracking of Minerals or Herbs after the Character is revived"
         Settings.CreateCheckbox(category, setting, tooltip)
     end
 
@@ -210,31 +215,26 @@ settings:SetScript("OnEvent", function(_, _, addonName)
         frame:RegisterEvent("PLAYER_LOGIN")
 
         frame:SetScript("OnEvent", function()
-            local index, info = findMiningTracking()
-            if not info then
+            if not DementiaDB.enableGatheringTracking then
                 return
             end
 
-            if info.enabled or not DementiaDB.enableMiningTracking then
-                return
-            end
-
-            C_Minimap.SetTracking(index, true)
+            restoreGatheringTracking()
         end)
     end
 
     lastBlockedAt = GetTime() -- grace period after start as well
 
     C_Timer.NewTicker(BASE_LOOP_INTERVAL, function()
-        if UnitOnTaxi("player") or UnitIsAFK("player") then
-            return
-        end
-
-        if InCombatLockdown() or UnitIsDeadOrGhost("player") then
+        if isRestricted() or InCombatLockdown() or UnitIsDeadOrGhost("player") then
             lastBlockedAt = GetTime()
             for _, reminder in ipairs(REMINDERS) do
                 reminder.pendingTicks = 0
             end
+            return
+        end
+
+        if UnitOnTaxi("player") or UnitIsAFK("player") then
             return
         end
 
