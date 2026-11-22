@@ -18,53 +18,85 @@ local YAWNS = {
 }
 
 local SIGHS = {
-    540729,
-    540524,
-    540952,
-    540865,
-    1304917,
-    1316213
+    7914, -- human male sigh
+    7894, -- human female sigh
+    7915, -- nightelf female sigh
+    7916, -- nightelf male sigh
+    7925, -- tauren female sigh
+    7926 -- tauren male sigh
 }
 
-local FADE_MS = 500
-
+local BASE_LOOP_INTERVAL = 2
+local DEBOUNCE_TICKS = 2
+local GRACE_PERIOD = 20
 local DEFAULT_REMINDER_INTERVAL = 60
-
 local WELL_RESTED_MAX_STACKS = 3
+local WELL_RESTED_EXPIRY_WARNING_SECONDS = 600
 
-local sleepingBagTimer
-local buffFoodTimer
 local busyUntil = 0
-local quietUntil = GetTime() + 10
+local lastBlockedAt = 0
 
-local function PlayCue(sound, msg, length, cut, isKit)
-    if InCombatLockdown() or UnitOnTaxi("player") or UnitIsAFK("player") or GetTime() < quietUntil then
-        return
-    end
-
+local function PlayCue(sound, msg, length)
     local now = GetTime()
     if now < busyUntil then
-        C_Timer.After(busyUntil - now, function()
-            PlayCue(sound, msg, length, cut, isKit)
-        end)
-        return
+        return false -- next tick retries, since the timestamp wasn't updated
     end
-    busyUntil = now + (cut or length) + 1
+    busyUntil = now + length + 3
 
     RaidNotice_AddMessage(RaidWarningFrame, msg, ChatTypeInfo.RAID_WARNING, 5)
 
-    local ok, handle
-    if isKit then
-        ok, handle = PlaySound(sound, "Master")
-    else
-        ok, handle = PlaySoundFile(sound, "Master")
-    end
-    if ok and cut then
-        C_Timer.After(cut, function()
-            StopSound(handle, FADE_MS)
-        end)
-    end
+    PlaySound(sound, "Master")
+    return true
 end
+
+local sleepingBagReminder = {
+    pendingTicks = 0,
+    lastAt = 0,
+    isNeeded = function()
+        local wellRestedAura = C_UnitAuras.GetPlayerAuraBySpellID(WELL_RESTED_SPELL_ID)
+        local hasMaxStacks = wellRestedAura and wellRestedAura.applications >= WELL_RESTED_MAX_STACKS
+        local isExpiringSoon = wellRestedAura
+                and wellRestedAura.expirationTime > 0
+                and (wellRestedAura.expirationTime - GetTime()) < WELL_RESTED_EXPIRY_WARNING_SECONDS
+        local sleepingAura = C_UnitAuras.GetPlayerAuraBySpellID(RESTING_SPELL_ID)
+
+        local needsBuff = not hasMaxStacks or isExpiringSoon -- missing, under 3 stacks, or running out
+
+        return DementiaDB.enableSleepingBagReminder -- setting on
+                and needsBuff
+                and not sleepingAura                    -- not laying in the sleeping bag
+                and not IsResting()                     -- not in a city or inn
+        , isExpiringSoon and hasMaxStacks
+    end,
+    play = function(isExpiringSoon)
+        local randomIndex = math.random(1, #YAWNS)
+        local randomYawnID = YAWNS[randomIndex]
+
+        local msg = isExpiringSoon and "you're getting tired..." or "you're tired..."
+        return PlayCue(randomYawnID, msg, 2)
+    end,
+}
+
+local buffFoodReminder = {
+    pendingTicks = 0,
+    lastAt = 0,
+    isNeeded = function()
+        local fedAura = C_UnitAuras.GetPlayerAuraBySpellID(FED_SPELL_ID)
+        local eatingAura = C_UnitAuras.GetAuraDataBySpellName("player", FOOD_NAME, "HELPFUL")
+
+        return DementiaDB.enableBuffFoodReminder       -- setting on
+                and not fedAura                                     -- buff missing
+                and not eatingAura                                  -- bro is eating
+                and not IsResting()                                 -- not in a city or inn
+    end,
+    play = function()
+        local randomIndex = math.random(1, #SIGHS)
+        local randomSighID = SIGHS[randomIndex]
+        return PlayCue(randomSighID, "you're hungry...", 3)
+    end
+}
+
+local REMINDERS = { sleepingBagReminder, buffFoodReminder }
 
 local function findMiningTracking()
     local numTrackingTypes = C_Minimap.GetNumTrackingTypes()
@@ -75,65 +107,6 @@ local function findMiningTracking()
         if info.spellID == FIND_MINING_SPELL_ID then
             return i, info
         end
-    end
-end
-
-local function wellRestedCallback()
-    local randomIndex = math.random(1, #YAWNS)
-    local randomYawnID = YAWNS[randomIndex]
-    PlayCue(randomYawnID, "you're tired...", 2, nil, true)
-end
-
-local function scheduleWellRested()
-    wellRestedCallback()
-    sleepingBagTimer = C_Timer.NewTimer(DementiaDB.reminderInterval, scheduleWellRested)
-end
-
-local function updateWellRested()
-    local wellRestedAura = C_UnitAuras.GetPlayerAuraBySpellID(WELL_RESTED_SPELL_ID)
-    local hasMaxStacks = wellRestedAura and wellRestedAura.applications >= WELL_RESTED_MAX_STACKS
-    local sleepingAura = C_UnitAuras.GetPlayerAuraBySpellID(RESTING_SPELL_ID)
-
-    local shouldAlert = DementiaDB.enableSleepingBagReminder    -- setting on
-            and not hasMaxStacks                    -- buff missing or under 3 stacks
-            and not sleepingAura                    -- not laying in the sleepingBag
-            and not IsResting()                     -- not in a city or inn
-            and not UnitIsDeadOrGhost("player")     -- alive
-
-    if shouldAlert and not sleepingBagTimer then
-        scheduleWellRested()
-    elseif not shouldAlert and sleepingBagTimer then
-        sleepingBagTimer:Cancel()
-        sleepingBagTimer = nil
-    end
-end
-
-local function fedCallback()
-    local randomIndex = math.random(1, #SIGHS)
-    local randomSighID = SIGHS[randomIndex]
-    PlayCue(randomSighID, "you're hungry...", 3)
-end
-
-local function scheduleFed()
-    fedCallback()
-    buffFoodTimer = C_Timer.NewTimer(DementiaDB.reminderInterval, scheduleFed)
-end
-
-local function updateFed()
-    local fedAura = C_UnitAuras.GetPlayerAuraBySpellID(FED_SPELL_ID)
-    local eatingAura = C_UnitAuras.GetAuraDataBySpellName("player", FOOD_NAME, "HELPFUL")
-
-    local shouldAlert = DementiaDB.enableBuffFoodReminder       -- setting on
-            and not fedAura                                     -- buff missing
-            and not eatingAura                                  -- bro is eating
-            and not IsResting()                                 -- not in a city or inn
-            and not UnitIsDeadOrGhost("player")                 -- alive
-
-    if shouldAlert and not buffFoodTimer then
-        scheduleFed()
-    elseif not shouldAlert and buffFoodTimer then
-        buffFoodTimer:Cancel()
-        buffFoodTimer = nil
     end
 end
 
@@ -190,8 +163,6 @@ settings:SetScript("OnEvent", function(_, _, addonName)
 
         local setting = Settings.RegisterAddOnSetting(category, variable, variableKey, variableTbl, type(defaultValue), name, defaultValue)
 
-        setting:SetValueChangedCallback(updateWellRested)
-
         local tooltip = "Plays a reminding sound when the character is missing the buff"
         Settings.CreateCheckbox(category, setting, tooltip)
     end
@@ -205,8 +176,6 @@ settings:SetScript("OnEvent", function(_, _, addonName)
 
         local setting = Settings.RegisterAddOnSetting(category, variable, variableKey, variableTbl, type(defaultValue), name, defaultValue)
 
-        setting:SetValueChangedCallback(updateFed)
-
         local tooltip = "Plays a reminding sound when the character is missing the buff"
         Settings.CreateCheckbox(category, setting, tooltip)
     end
@@ -217,7 +186,7 @@ settings:SetScript("OnEvent", function(_, _, addonName)
         local variableKey = "reminderInterval"
         local variableTbl = DementiaDB
         local defaultValue = DEFAULT_REMINDER_INTERVAL
-        local minValue = 10
+        local minValue = 30
         local maxValue = 600
         local step = 10
 
@@ -254,19 +223,46 @@ settings:SetScript("OnEvent", function(_, _, addonName)
         end)
     end
 
-    do
-        local frame = CreateFrame("Frame")
+    lastBlockedAt = GetTime() -- grace period after start as well
 
-        frame:RegisterUnitEvent("UNIT_AURA", "player")
-        frame:RegisterEvent("PLAYER_ENTERING_WORLD")
-        frame:RegisterEvent("PLAYER_UPDATE_RESTING")
-        frame:RegisterEvent("PLAYER_DEAD")
-        frame:RegisterEvent("PLAYER_ALIVE")
-        frame:RegisterEvent("PLAYER_UNGHOST")
+    C_Timer.NewTicker(BASE_LOOP_INTERVAL, function()
+        if UnitOnTaxi("player") or UnitIsAFK("player") then
+            return
+        end
 
-        frame:SetScript("OnEvent", function()
-            updateWellRested()
-            updateFed()
-        end)
-    end
+        if InCombatLockdown() or UnitIsDeadOrGhost("player") then
+            lastBlockedAt = GetTime()
+            for _, reminder in ipairs(REMINDERS) do
+                reminder.pendingTicks = 0
+            end
+            return
+        end
+
+        if (GetTime() - lastBlockedAt) < GRACE_PERIOD then
+            return
+        end
+
+        local playedThisTick = false
+
+        for _, reminder in ipairs(REMINDERS) do
+            local isNeeded, reason = reminder.isNeeded()
+
+            if not isNeeded then
+                reminder.pendingTicks = 0
+            else
+                reminder.pendingTicks = reminder.pendingTicks + 1
+
+                local isDebounced = reminder.pendingTicks >= DEBOUNCE_TICKS
+                local isIntervalOver = GetTime() - reminder.lastAt >= DementiaDB.reminderInterval
+
+                if isDebounced and isIntervalOver and not playedThisTick then
+                    local hasPlayed = reminder.play(reason)
+                    if hasPlayed then
+                        reminder.lastAt = GetTime()
+                        playedThisTick = true
+                    end
+                end
+            end
+        end
+    end)
 end)
