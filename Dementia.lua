@@ -1,4 +1,5 @@
-local ADDON_NAME = "Dementia"
+local ADDON_NAME, ns = ...
+local SOUNDS = ns.SOUNDS
 
 local FIND_MINING_SPELL_ID = 2580
 local FIND_HERBS_SPELL_ID = 2383
@@ -8,29 +9,10 @@ local FED_SPELL_ID = 1249519
 local EATING_SPELL_ID = 435
 local FOOD_NAME = C_Spell.GetSpellName(EATING_SPELL_ID)
 
-local YAWNS = {
-    7946,
-    7945,
-    7942,
-    7931,
-    7932,
-    7933,
-    7934,
-}
-
-local SIGHS = {
-    7914, -- human male sigh
-    7894, -- human female sigh
-    7915, -- nightelf female sigh
-    7916, -- nightelf male sigh
-    7925, -- tauren female sigh
-    7926 -- tauren male sigh
-}
-
 local BASE_LOOP_INTERVAL = 2
 local DEBOUNCE_TICKS = 2
 local GRACE_PERIOD = 20
-local DEFAULT_REMINDER_INTERVAL = 60
+local DEFAULT_REMINDER_INTERVAL = 120
 local WELL_RESTED_MAX_STACKS = 3
 local WELL_RESTED_EXPIRY_WARNING_SECONDS = 600
 
@@ -55,7 +37,7 @@ local function PlayCue(sound, msg, length)
 
     RaidNotice_AddMessage(RaidWarningFrame, msg, ChatTypeInfo.RAID_WARNING, 5)
 
-    PlaySound(sound, "Master")
+    PlaySoundFile(sound, "Master")
     return true
 end
 
@@ -79,11 +61,9 @@ local sleepingBagReminder = {
         , isExpiringSoon and hasMaxStacks
     end,
     play = function(isExpiringSoon)
-        local randomIndex = math.random(1, #YAWNS)
-        local randomYawnID = YAWNS[randomIndex]
-
+        local fileID = SOUNDS.Resolve(SOUNDS.YAWN, DementiaDB.sleepingBagSound)
         local msg = isExpiringSoon and "you're getting tired..." or "you're tired..."
-        return PlayCue(randomYawnID, msg, 2)
+        return PlayCue(fileID, msg, 2)
     end,
 }
 
@@ -100,9 +80,8 @@ local buffFoodReminder = {
                 and not IsResting()                                 -- not in a city or inn
     end,
     play = function()
-        local randomIndex = math.random(1, #SIGHS)
-        local randomSighID = SIGHS[randomIndex]
-        return PlayCue(randomSighID, "you're hungry...", 3)
+        local fileID = SOUNDS.Resolve(SOUNDS.SIGH, DementiaDB.buffFoodSound)
+        return PlayCue(fileID, "you're hungry...", 3)
     end
 }
 
@@ -140,9 +119,19 @@ settings:SetScript("OnEvent", function(_, _, addonName)
         DementiaDB.reminderInterval = DEFAULT_REMINDER_INTERVAL
     end
 
-    local category = Settings.RegisterVerticalLayoutCategory(ADDON_NAME)
+    if DementiaDB.sleepingBagSound == nil then
+        DementiaDB.sleepingBagSound = SOUNDS.RANDOM_ID
+    end
+
+    if DementiaDB.buffFoodSound == nil then
+        DementiaDB.buffFoodSound = SOUNDS.RANDOM_ID
+    end
+
+    local category, layout = Settings.RegisterVerticalLayoutCategory(ADDON_NAME)
 
     do
+        layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Gathering"))
+
         local name = "Restore Gathering Tracking"
         local variable = "DementiaEnableGatheringTracking"
         local variableKey = "enableGatheringTracking"
@@ -152,7 +141,9 @@ settings:SetScript("OnEvent", function(_, _, addonName)
         local setting = Settings.RegisterAddOnSetting(category, variable, variableKey, variableTbl, type(defaultValue), name, defaultValue)
 
         setting:SetValueChangedCallback(function(_, value)
-            if value then restoreGatheringTracking() end
+            if value then
+                restoreGatheringTracking()
+            end
         end)
 
         local tooltip = "Enables Tracking of Minerals or Herbs after the Character is revived"
@@ -160,32 +151,7 @@ settings:SetScript("OnEvent", function(_, _, addonName)
     end
 
     do
-        local name = "Sleeping Bag Reminder"
-        local variable = "DementiaEnableSleepingBagReminder"
-        local variableKey = "enableSleepingBagReminder"
-        local variableTbl = DementiaDB
-        local defaultValue = false
-
-        local setting = Settings.RegisterAddOnSetting(category, variable, variableKey, variableTbl, type(defaultValue), name, defaultValue)
-
-        local tooltip = "Plays a reminding sound when the character is missing the buff"
-        Settings.CreateCheckbox(category, setting, tooltip)
-    end
-
-    do
-        local name = "Buff Food Reminder"
-        local variable = "DementiaEnableBuffFoodReminder"
-        local variableKey = "enableBuffFoodReminder"
-        local variableTbl = DementiaDB
-        local defaultValue = false
-
-        local setting = Settings.RegisterAddOnSetting(category, variable, variableKey, variableTbl, type(defaultValue), name, defaultValue)
-
-        local tooltip = "Plays a reminding sound when the character is missing the buff"
-        Settings.CreateCheckbox(category, setting, tooltip)
-    end
-
-    do
+        layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Reminders"))
         local name = "Reminder Interval"
         local variable = "DementiaReminderInterval"
         local variableKey = "reminderInterval"
@@ -201,6 +167,62 @@ settings:SetScript("OnEvent", function(_, _, addonName)
         local options = Settings.CreateSliderOptions(minValue, maxValue, step)
         options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right);
         Settings.CreateSlider(category, setting, options, tooltip)
+    end
+
+    do
+        local name = "Sleeping Bag Reminder"
+        local variable = "DementiaEnableSleepingBagReminder"
+        local variableKey = "enableSleepingBagReminder"
+        local variableTbl = DementiaDB
+        local defaultValue = false
+
+        local setting = Settings.RegisterAddOnSetting(category, variable, variableKey, variableTbl, type(defaultValue), name, defaultValue)
+
+        local tooltip = "Plays a reminding sound when the character is missing the buff"
+        local init = Settings.CreateCheckbox(category, setting, tooltip)
+
+        local soundSetting = Settings.RegisterAddOnSetting(category, "DementiaSleepingBagSound",
+                "sleepingBagSound", DementiaDB, "number", "Sleeping Bag Sound", SOUNDS.RANDOM_ID)
+        local soundInit = Settings.CreateDropdown(category, soundSetting, function()
+            return SOUNDS.GetOptions(SOUNDS.YAWN)
+        end, "The yawn that plays when you're missing Well Rested. Random picks a different one each time.")
+
+        soundSetting:SetValueChangedCallback(function(_, value)
+            local fileID = SOUNDS.Resolve(SOUNDS.YAWN, value)
+            PlaySoundFile(fileID, "Master")
+        end)
+
+        soundInit:SetParentInitializer(init, function()
+            return setting:GetValue()
+        end)
+    end
+
+    do
+        local name = "Buff Food Reminder"
+        local variable = "DementiaEnableBuffFoodReminder"
+        local variableKey = "enableBuffFoodReminder"
+        local variableTbl = DementiaDB
+        local defaultValue = false
+
+        local setting = Settings.RegisterAddOnSetting(category, variable, variableKey, variableTbl, type(defaultValue), name, defaultValue)
+
+        local tooltip = "Plays a reminding sound when the character is missing the buff"
+        local init = Settings.CreateCheckbox(category, setting, tooltip)
+
+        local soundSetting = Settings.RegisterAddOnSetting(category, "DementiaBuffFoodSound",
+                "buffFoodSound", DementiaDB, "number", "Buff Food Sound", SOUNDS.RANDOM_ID)
+        local soundInit = Settings.CreateDropdown(category, soundSetting, function()
+            return SOUNDS.GetOptions(SOUNDS.SIGH)
+        end, "The sigh that plays when you're missing Well Fed. Random picks a different one each time.")
+
+        soundSetting:SetValueChangedCallback(function(_, value)
+            local fileID = SOUNDS.Resolve(SOUNDS.SIGH, value)
+            PlaySoundFile(fileID, "Master")
+        end)
+
+        soundInit:SetParentInitializer(init, function()
+            return setting:GetValue()
+        end)
     end
 
     Settings.RegisterAddOnCategory(category)
