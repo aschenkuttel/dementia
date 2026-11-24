@@ -3,7 +3,7 @@
 ## Title: Dementia
 ## IconTexture: Interface\AddOns\Dementia\icon.tga
 ## Author: Aschenkuttel
-## Version: 1.0.1
+## Version: @project-version@
 
 Sounds.lua
 Dementia.lua
