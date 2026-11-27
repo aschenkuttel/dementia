@@ -4,6 +4,8 @@
 ## IconTexture: Interface\AddOns\Dementia\icon.tga
 ## Author: Aschenkuttel
 ## Version: @project-version@
+## OptionalDeps: Questie
 
 Sounds.lua
+Colors.lua
 Dementia.lua

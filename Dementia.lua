@@ -1,5 +1,6 @@
 local ADDON_NAME, ns = ...
 local SOUNDS = ns.SOUNDS
+local COLORS = ns.COLORS
 
 local FIND_MINING_SPELL_ID = 2580
 local FIND_HERBS_SPELL_ID = 2383
@@ -99,6 +100,50 @@ local function restoreGatheringTracking()
     end
 end
 
+local function MapScale(frame)
+    local d = frame.data
+    if not d then return end
+
+    if d.Type == "available" then return 1 end
+
+    if d.Type == "complete" then return 2 end -- all turn-ins
+end
+
+local function MapColor(frame)
+    local d = frame.data
+    if not d then return end
+
+    local d = frame.data
+    if d.Type ~= "complete" then return end
+    return CreateColorFromHexString(DementiaDB.highlightQuestieTurnInColor)
+end
+
+local function Wrap(frame)
+    if frame.__dementiaWrapped then return end
+    frame.__dementiaWrapped = true
+    local orig = frame.SetSize
+    local origColor = frame.texture.SetVertexColor
+
+    frame.SetSize = function(self, w, h)
+        local m = DementiaDB.highlightQuestieTurnInIcons and not self.miniMapIcon and MapScale(self)
+        if m then w, h = w * m, h * m end
+        return orig(self, w, h)
+    end
+
+    frame.texture.SetVertexColor = function(self, r, g, b, a)
+        local m = DementiaDB.highlightQuestieTurnInIcons and not frame.miniMapIcon and MapColor(frame)
+        if m then
+            if DementiaDB.highlightQuestieTurnInColor ~= COLORS.MAP_COLORS[1].hex then
+                self:SetDesaturated(false)
+            end
+
+            local r, g, b = m:GetRGB()
+            return origColor(self, r, g, b, a)
+        end
+        return origColor(self, r, g, b, a)
+    end
+end
+
 -- settings
 
 local settings = CreateFrame("Frame")
@@ -125,6 +170,14 @@ settings:SetScript("OnEvent", function(_, _, addonName)
 
     if DementiaDB.buffFoodSound == nil then
         DementiaDB.buffFoodSound = SOUNDS.RANDOM_ID
+    end
+
+    if DementiaDB.highlightQuestieTurnInIcons == nil then
+        DementiaDB.highlightQuestieTurnInIcons = false
+    end
+
+    if DementiaDB.highlightQuestieTurnInColor == nil then
+        DementiaDB.highlightQuestieTurnInColor = COLORS.MAP_COLORS[1].hex
     end
 
     local category, layout = Settings.RegisterVerticalLayoutCategory(ADDON_NAME)
@@ -225,6 +278,47 @@ settings:SetScript("OnEvent", function(_, _, addonName)
         end)
     end
 
+    do
+        local QuestieQuest = QuestieLoader and QuestieLoader:ImportModule("QuestieQuest")
+
+        local categoryName = QuestieQuest and "Questie" or "Questie (not loaded)"
+        layout:AddInitializer(CreateSettingsListSectionHeaderInitializer(categoryName))
+
+        local name = "Highlight Turn-in Icons"
+        local variable = "DementiaHighlightQuestieTurnInIcons"
+        local variableKey = "highlightQuestieTurnInIcons"
+        local variableTbl = DementiaDB
+        local defaultValue = false
+
+        local setting = Settings.RegisterAddOnSetting(category, variable, variableKey, variableTbl, type(defaultValue), name, defaultValue)
+
+        setting:SetValueChangedCallback(function()
+            if QuestieQuest then QuestieQuest:SmoothReset() end
+        end)
+
+        local tooltip = "Makes Questie's turn-in icons on the world map larger and green, so finished quests stand out. Requires Questie."
+        local init = Settings.CreateCheckbox(category, setting, tooltip)
+
+        local colorSetting = Settings.RegisterAddOnSetting(category, "DementiaHighlightQuestieTurnInIconColor",
+                "highlightQuestieTurnInColor", DementiaDB, type(COLORS.MAP_COLORS[1].hex), "Icon Color", COLORS.MAP_COLORS[1].hex)
+        local colorInit = Settings.CreateDropdown(category, colorSetting, function()
+            return COLORS.GetOptions(COLORS.MAP_COLORS)
+        end, "The color of the turn-in icons.")
+
+        init:AddModifyPredicate(function()
+            return QuestieQuest ~= nil
+        end)
+
+        colorSetting:SetValueChangedCallback(function()
+            if QuestieQuest then QuestieQuest:SmoothReset() end
+        end)
+
+        colorInit:SetParentInitializer(init, function()
+            if not QuestieQuest then return false end
+            return setting:GetValue()
+        end)
+    end
+
     Settings.RegisterAddOnCategory(category)
 
     -- features
@@ -287,4 +381,15 @@ settings:SetScript("OnEvent", function(_, _, addonName)
             end
         end
     end)
+
+    if QuestieLoader then
+        local FramePool = QuestieLoader:ImportModule("QuestieFramePool")
+
+        local getFrame = FramePool.GetFrame
+        FramePool.GetFrame = function(...)
+            local f = getFrame(...)
+            Wrap(f)
+            return f
+        end
+    end
 end)
